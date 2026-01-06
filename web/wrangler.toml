@@ -4,6 +4,6 @@ compatibility_date = "2026-01-06"
 # Cloudflare Pages 정적 산출물 경로 (Next.js export 결과물)
 pages_build_output_dir = "./out"
 
-# Cloudflare 계정 ID (CI에서 환경변수로 덮어씌우도록 권장)
-account_id = "6c9a5bdb861dab35086248dce9e10992"
+# Pages 전용 wrangler 설정에서는 account_id를 지원하지 않습니다.
+# 계정 식별은 배포 시 wrangler가 로그인/토큰으로 처리합니다.
 
