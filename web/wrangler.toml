@@ -1,4 +1,4 @@
-name = "ebook-main"
+name = "hanallcompany-ebook"
 compatibility_date = "2026-01-06"
 
 # Cloudflare Pages 정적 산출물 경로 (Next.js export 결과물)
