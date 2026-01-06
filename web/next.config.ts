@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Cloudflare Pages에 정적 산출물을 배포하기 위해 export 모드 사용
+  output: "export",
   reactCompiler: true,
 };
 

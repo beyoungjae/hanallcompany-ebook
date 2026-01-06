@@ -6,8 +6,11 @@
       "dev": "next dev --webpack",
       "build": "next build --webpack",
       "start": "next start",
-      "lint": "eslint",
-      "postinstall": "node scripts/copy-pdfjs.mjs"
+     "lint": "eslint",
+     "postinstall": "node scripts/copy-pdfjs.mjs",
+     "deploy:pages": "wrangler pages deploy ./out --project-name ebook-main --branch production",
+     "preview:pages": "wrangler pages deploy ./out --project-name ebook-main --branch preview --commit-dirty=true",
+     "pages:dev": "wrangler pages dev ./out --project-name ebook-main"
    },
    "dependencies": {
       "@radix-ui/react-slot": "^1.2.4",
@@ -30,6 +33,7 @@
       "eslint": "^9",
       "eslint-config-next": "16.1.1",
       "tailwindcss": "^4",
-      "typescript": "^5"
+      "typescript": "^5",
+      "wrangler": "^4.54.0"
    }
 }
