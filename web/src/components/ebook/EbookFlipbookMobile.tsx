@@ -1,11 +1,11 @@
 'use client'
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import HTMLFlipBook from 'react-pageflip'
-import { ChevronLeft, ChevronRight, Loader2, Minus, Plus } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { MobileControls } from './MobileControls'
 
 type PdfDocument = {
    numPages: number
@@ -48,8 +48,7 @@ export type EbookFlipbookProps = {
    className?: string
 }
 
-// PC 전용 플립북 컴포넌트 (기존 동작 유지)
-export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps) {
+export default function EbookFlipbookMobile({ pdfUrl, className }: EbookFlipbookProps) {
    const { ref: containerRef, width: containerWidth, height: containerHeight } = useElementSize<HTMLDivElement>()
 
    const flipbookRef = useRef<PageFlipApi | null>(null)
@@ -58,55 +57,120 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
    const inflightPagesRef = useRef<Set<number>>(new Set())
    const renderLoopIdRef = useRef(0)
    const lastSizeKeyRef = useRef<string | null>(null)
-   const autoFlipTimerRef = useRef<number | null>(null)
    const scheduleTimerRef = useRef<number | null>(null)
    const scheduleRenderRef = useRef<(() => void) | null>(null)
    const pageIndexRef = useRef(0)
-   const scrollRef = useRef<HTMLDivElement | null>(null)
-   const dragScrollRef = useRef<{ active: boolean; x: number; y: number; left: number; top: number }>({
-      active: false,
-      x: 0,
-      y: 0,
-      left: 0,
-      top: 0,
-   })
+   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+   const lastNavAtRef = useRef(0)
 
    const [reloadNonce, setReloadNonce] = useState(0)
    const [doc, setDoc] = useState<PdfDocument | null>(null)
    const [numPages, setNumPages] = useState(0)
    const [pageIndex, setPageIndex] = useState(0)
    const [pageSize, setPageSize] = useState<{ w: number; h: number } | null>(null)
-   const [pageRatio, setPageRatio] = useState<number | null>(null) // height / width
+   const [pageRatio, setPageRatio] = useState<number | null>(null)
    const [viewZoom, setViewZoom] = useState(1.0)
-   const [panBySpace, setPanBySpace] = useState(false)
-   const [isPanning, setIsPanning] = useState(false)
 
    const [status, setStatus] = useState<{ state: 'idle' } | { state: 'loading' } | { state: 'rendering'; rendered: number; total: number } | { state: 'ready' } | { state: 'error'; message: string }>({ state: 'idle' })
 
-   const isNarrow = containerWidth > 0 && containerWidth < 768
-   const controlsH = 84
+   const controlsH = 60
 
    const targetPageSize = useMemo(() => {
       if (!pageRatio) return null
 
-      const padX = 24
-      const padY = 16
+      const padX = 8
+      const padY = 8
       const availableW = Math.max(0, containerWidth - padX * 2)
       const availableH = Math.max(0, containerHeight - controlsH - padY * 2)
       if (availableW <= 0 || availableH <= 0) return null
 
-      // PC(스프레드=2페이지) 기준: "가장 크게" 맞추기
-      // 제약: spread면 2*w <= availableW, h=w*ratio <= availableH
-      const maxWByWidth = isNarrow ? availableW : availableW / 2
+      const maxWByWidth = availableW
       const maxWByHeight = pageRatio > 0 ? availableH / pageRatio : maxWByWidth
       const baseW = Math.max(0, Math.min(maxWByWidth, maxWByHeight))
 
-      // 줌은 페이지 자체 크기를 키우고, 이동은 스크롤(스크롤바 숨김 + 드래그)
       const w = baseW * viewZoom
       const h = w * pageRatio
 
       return { w, h }
-   }, [containerWidth, containerHeight, controlsH, isNarrow, pageRatio, viewZoom])
+   }, [containerWidth, containerHeight, controlsH, pageRatio, viewZoom])
+
+   const sizeKey = useMemo(() => {
+      if (!pageSize) return null
+      return `${Math.round(pageSize.w)}x${Math.round(pageSize.h)}`
+   }, [pageSize])
+
+   useEffect(() => {
+      if (!targetPageSize) return
+      setPageSize(targetPageSize)
+   }, [targetPageSize])
+
+   useEffect(() => {
+      pageIndexRef.current = pageIndex
+   }, [pageIndex])
+
+   const getFlipbookPageIndex = useCallback(() => {
+      try {
+         const api = flipbookRef.current?.pageFlip?.()
+         const idx = api?.getCurrentPageIndex?.()
+         return typeof idx === 'number' && Number.isFinite(idx) ? idx : null
+      } catch {
+         return null
+      }
+   }, [])
+
+   const syncPageIndexFromFlipbook = useCallback(() => {
+      const idx = getFlipbookPageIndex()
+      if (idx == null) return
+      setPageIndex((prev) => (prev === idx ? prev : idx))
+      pageIndexRef.current = idx
+   }, [getFlipbookPageIndex])
+
+   const syncAfterFlip = useCallback(() => {
+      // react-pageflip이 programmatic flip에서 onFlip 이벤트를 누락하는 환경이 있어
+      // 애니메이션 전/후로 한 번씩 현재 페이지 인덱스를 강제 동기화
+      requestAnimationFrame(() => syncPageIndexFromFlipbook())
+      window.setTimeout(() => syncPageIndexFromFlipbook(), 220)
+   }, [syncPageIndexFromFlipbook])
+
+   const navTo = useCallback(
+      (dir: 'prev' | 'next') => {
+         const api = flipbookRef.current?.pageFlip?.()
+         if (!api) return
+
+         // 모바일에서 pointerup/click 등 중복 트리거로 2번 실행되는 케이스 방지
+         const now = (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) as number
+         if (now - lastNavAtRef.current < 240) return
+         lastNavAtRef.current = now
+
+         const current = api.getCurrentPageIndex?.()
+         const curIdx = typeof current === 'number' && Number.isFinite(current) ? current : pageIndexRef.current
+         const targetRaw = dir === 'next' ? curIdx + 1 : curIdx - 1
+         const target = Math.max(0, Math.min(Math.max(0, numPages - 1), targetRaw))
+
+         if (target === curIdx) return
+         api.turnToPage(target)
+         syncAfterFlip()
+         scheduleRenderRef.current?.()
+      },
+      [numPages, syncAfterFlip]
+   )
+
+   const flipPrev = useCallback(() => navTo('prev'), [navTo])
+   const flipNext = useCallback(() => navTo('next'), [navTo])
+
+   useEffect(() => {
+      const el = scrollContainerRef.current
+      if (!el || !pageSize) return
+      requestAnimationFrame(() => {
+         if (viewZoom > 1) {
+            el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
+            el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2)
+         } else {
+            el.scrollTop = 0
+            el.scrollLeft = 0
+         }
+      })
+   }, [viewZoom, pageSize])
 
    useEffect(() => {
       let cancelled = false
@@ -120,9 +184,8 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
          setPageRatio(null)
 
          try {
-            // Webpack 번들링을 피하기 위해(해당 경로에서 runtime 에러 발생) public 에서 네이티브 import로 로드
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-ignore - webpackIgnore 주석은 번들러 힌트이며 TS 타입은 d.ts로 보강
+            // @ts-ignore
             const pdfjs = (await import(/* webpackIgnore: true */ '/pdfjs/pdf.mjs')) as unknown as {
                getDocument: typeof import('pdfjs-dist').getDocument
                GlobalWorkerOptions: { workerSrc: string }
@@ -145,7 +208,6 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
             setStatus({ state: 'ready' })
          } catch (e) {
             if (cancelled) return
-            // 원인 추적을 위해 브라우저 콘솔에 원본 에러(스택 포함)를 남김
             // eslint-disable-next-line no-console
             console.error('[EbookFlipbook] pdf.js load error:', e)
             const message = e instanceof Error ? e.message : 'PDF를 불러오지 못했습니다.'
@@ -160,50 +222,6 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
    }, [pdfUrl, reloadNonce])
 
    useEffect(() => {
-      if (!targetPageSize) return
-      setPageSize(targetPageSize)
-   }, [targetPageSize])
-
-   useEffect(() => {
-      // 줌/사이즈 변경 시 스크롤을 가운데로(스크롤바는 숨김)
-      const el = scrollRef.current
-      if (!el) return
-      // 다음 프레임에 측정값이 확정되므로 rAF로 한 번 미룸
-      requestAnimationFrame(() => {
-         el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
-         el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2)
-      })
-   }, [viewZoom])
-
-   useEffect(() => {
-      pageIndexRef.current = pageIndex
-   }, [pageIndex])
-
-   useEffect(() => {
-      const handleKeyDown = (e: KeyboardEvent) => {
-         if (e.code === 'Space') {
-            setPanBySpace(true)
-            // 스페이스 누른 채 스크롤 이동 시 페이지 점프를 막음
-            e.preventDefault()
-         }
-      }
-      const handleKeyUp = (e: KeyboardEvent) => {
-         if (e.code === 'Space') setPanBySpace(false)
-      }
-      window.addEventListener('keydown', handleKeyDown, { passive: false })
-      window.addEventListener('keyup', handleKeyUp, { passive: false })
-      return () => {
-         window.removeEventListener('keydown', handleKeyDown)
-         window.removeEventListener('keyup', handleKeyUp)
-      }
-   }, [])
-
-   const sizeKey = useMemo(() => {
-      if (!pageSize) return null
-      return `${Math.round(pageSize.w)}x${Math.round(pageSize.h)}`
-   }, [pageSize])
-
-   useEffect(() => {
       if (!doc) return
       if (!pageSize) return
       if (numPages <= 0) return
@@ -216,7 +234,6 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
 
       const currentSizeKey = `${Math.round(size.w)}x${Math.round(size.h)}@${viewZoom.toFixed(2)}`
       if (lastSizeKeyRef.current !== currentSizeKey) {
-         // 줌/리사이즈로 페이지 크기가 바뀌면: 캐시 초기화 + 캔버스 깨끗이
          renderedPagesRef.current.clear()
          inflightPagesRef.current.clear()
          lastSizeKeyRef.current = currentSizeKey
@@ -230,7 +247,6 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
       }
 
       const waitForCanvas = async (index: number, maxFrames = 180) => {
-         // react-pageflip이 DOM을 늦게 구성하는 경우가 있어, ref가 붙을 때까지 잠시 대기
          for (let i = 0; i < maxFrames; i++) {
             if (cancelled) return null
             if (renderLoopIdRef.current !== loopId) return null
@@ -251,7 +267,6 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
          if (renderedPages.has(pageNo) || inflightPages.has(pageNo)) return
          inflightPages.add(pageNo)
 
-         // 줌 시 글자가 뭉개지지 않게 DPR을 줌에 맞춰 올리되, 상한을 둠(메모리 폭주 방지)
          const baseDpr = Math.max(1, window.devicePixelRatio || 1)
          const dpr = Math.min(3, baseDpr * Math.min(1.6, viewZoom))
 
@@ -271,7 +286,6 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
          const scale = size.w / vp1.width
          const viewport = page.getViewport({ scale: scale * dpr })
 
-         // 같은 사이즈키로 이미 그렸으면(애니메이션 중 깜빡임 방지) 건드리지 않음
          if (canvas.dataset.sizeKey !== currentSizeKey) {
             canvas.dataset.sizeKey = currentSizeKey
          }
@@ -295,7 +309,6 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
             await task.promise
             renderedPages.add(pageNo)
          } catch (e) {
-            // 빠른 넘김/리렌더 과정에서 발생하는 취소는 정상 케이스라 조용히 무시
             const name = (e as any)?.name
             const msg = (e as any)?.message
             if (name === 'RenderingCancelledException' || (typeof msg === 'string' && msg.includes('Rendering cancelled'))) {
@@ -310,26 +323,23 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
       }
 
       const renderWindow = async () => {
-         // 두 페이지 스프레드 기준으로 현재/주변만 선렌더링 (답답함 방지)
          const current = Math.max(0, Math.min(numPages - 1, pageIndexRef.current))
          const currentPageNo = current + 1
          const want = new Set<number>()
 
-         // 현재 스프레드(2장) + 앞뒤 버퍼
-         const start = Math.max(1, currentPageNo - (isNarrow ? 2 : 4))
-         const end = Math.min(numPages, currentPageNo + (isNarrow ? 4 : 10))
+         const start = Math.max(1, currentPageNo - 2)
+         const end = Math.min(numPages, currentPageNo + 4)
          for (let p = start; p <= end; p++) want.add(p)
 
          const renderedPages = renderedPagesRef.current
+         // 진행률 UI를 표시하지 않으므로(현재는 로딩/에러만 노출), 과도한 setState를 줄여 모바일 성능 최적화
          setStatus({ state: 'rendering', rendered: renderedPages.size, total: numPages })
          for (const p of want) {
             if (cancelled) return
             // eslint-disable-next-line no-await-in-loop
             await renderOne(p)
-            setStatus({ state: 'rendering', rendered: renderedPages.size, total: numPages })
          }
 
-         // 최소한 현재 페이지가 렌더되면 ready로 전환
          if (renderedPages.has(currentPageNo) || renderedPages.has(currentPageNo + 1) || renderedPages.has(currentPageNo - 1)) {
             setStatus({ state: 'ready' })
          }
@@ -338,14 +348,12 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
       const schedule = () => {
          if (cancelled) return
          if (scheduleTimerRef.current) window.clearTimeout(scheduleTimerRef.current)
-         // 다다다닥 넘길 때 렌더를 모아서(애니메이션 이후) 한 번만 수행
          scheduleTimerRef.current = window.setTimeout(() => {
             void renderWindow()
          }, 160)
       }
       scheduleRenderRef.current = schedule
 
-      // 최초 1회 + zoom 변경 시 보충 렌더
       schedule()
 
       return () => {
@@ -354,88 +362,63 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
          if (scheduleTimerRef.current) window.clearTimeout(scheduleTimerRef.current)
          for (const t of renderTasks) t?.cancel?.()
       }
-   }, [doc, numPages, pageSize, isNarrow, viewZoom])
+   }, [doc, numPages, pageSize, viewZoom])
 
    const canUseFlipbook = status.state !== 'error' && numPages > 0 && pageSize && pageSize.w > 10 && pageSize.h > 10
 
+   useEffect(() => {
+      if (!canUseFlipbook) return
+      // 최초 1회 동기화(버튼 disabled 상태가 실제 페이지와 어긋나는 문제 방지)
+      requestAnimationFrame(() => syncPageIndexFromFlipbook())
+   }, [canUseFlipbook, syncPageIndexFromFlipbook])
+
    const currentPageLabel = useMemo(() => {
-      // react-pageflip은 내부적으로 0-based page index
       const total = Math.max(1, numPages)
-      const left = Math.min(total, Math.max(1, pageIndex + 1))
-      if (isNarrow) return `${left} / ${total}`
-      const right = Math.min(total, left + 1)
-      return right === left ? `${left} / ${total}` : `${left}-${right} / ${total}`
-   }, [isNarrow, pageIndex, numPages])
+      const current = Math.min(total, Math.max(1, pageIndex + 1))
+      return `${current} / ${total}`
+   }, [pageIndex, numPages])
 
    const zoomLabel = `${Math.round(viewZoom * 100)}%`
    const canZoomOut = viewZoom > 0.7
    const canZoomIn = viewZoom < 2.5
 
-   const startAutoFlip = (dir: 'next' | 'prev') => {
-      if (!canUseFlipbook) return
-      // 길게 누르면 여러 장이 부드럽게 "촤르륵" 넘어가게
-      if (autoFlipTimerRef.current) window.clearInterval(autoFlipTimerRef.current)
-      autoFlipTimerRef.current = window.setInterval(() => {
-         if (dir === 'next') flipbookRef.current?.pageFlip().flipNext()
-         else flipbookRef.current?.pageFlip().flipPrev()
-      }, 180)
-   }
-
-   const stopAutoFlip = () => {
-      if (!autoFlipTimerRef.current) return
-      window.clearInterval(autoFlipTimerRef.current)
-      autoFlipTimerRef.current = null
-   }
+   // 모바일 입력 제어: globals.css에서 `.flipbook { pointer-events: none }` 처리되어 있어
+   // 실제 입력은 `.flipbook-overlay`에서 받아 좌/우 탭(마우스 클릭 포함)으로 페이지를 넘긴다.
+   const handleOverlayClick = useCallback(
+      (clientX: number) => {
+         if (!canUseFlipbook) return
+         // 확대 상태에서는 탭 넘김 비활성(패닝/스크롤 우선)
+         if (viewZoom > 1) return
+         const viewportWidth = window.innerWidth || 1
+         const isLeftSide = clientX < viewportWidth / 2
+         if (isLeftSide) flipPrev()
+         else flipNext()
+      },
+      [canUseFlipbook, flipNext, flipPrev, viewZoom]
+   )
 
    return (
-      <section ref={containerRef} className={cn('flex h-dvh w-dvw flex-col bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50', className)}>
-         {/* 컨트롤 바(항상 상단 고정 - 줌 영향 받지 않음) */}
-         <div className="fixed top-0 left-0 right-0 z-10 flex items-center justify-between gap-2 border-b border-zinc-200 bg-white/95 px-2 py-2 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90 md:gap-3 md:px-3 md:py-3 md:px-5">
-            <div className="flex items-center gap-1 md:gap-2">
-               <Button
-                  variant="secondary"
-                  className="h-9 px-3 text-sm md:h-12 md:px-4 md:text-base"
-                  onClick={() => flipbookRef.current?.pageFlip().flipPrev()}
-                  onPointerDown={() => startAutoFlip('prev')}
-                  onPointerUp={stopAutoFlip}
-                  onPointerCancel={stopAutoFlip}
-                  onPointerLeave={stopAutoFlip}
-                  disabled={!canUseFlipbook}
-               >
-                  <ChevronLeft className="h-4 w-4 md:h-5 md:w-5" />
-                  <span className="hidden sm:inline">이전</span>
-               </Button>
-               <Button
-                  variant="secondary"
-                  className="h-9 px-3 text-sm md:h-12 md:px-4 md:text-base"
-                  onClick={() => flipbookRef.current?.pageFlip().flipNext()}
-                  onPointerDown={() => startAutoFlip('next')}
-                  onPointerUp={stopAutoFlip}
-                  onPointerCancel={stopAutoFlip}
-                  onPointerLeave={stopAutoFlip}
-                  disabled={!canUseFlipbook}
-               >
-                  <span className="hidden sm:inline">다음</span>
-                  <ChevronRight className="h-4 w-4 md:h-5 md:w-5" />
-               </Button>
-            </div>
-
-            <div className="flex items-center gap-1 md:gap-3">
-               <div className="text-sm font-semibold tabular-nums md:text-base">{currentPageLabel}</div>
-
-               <div className="flex items-center gap-1 md:gap-2">
-                  <Button variant="outline" className="h-8 w-8 p-0 md:h-12 md:w-12" onClick={() => setViewZoom((z) => Math.max(0.7, Math.round((z - 0.1) * 10) / 10))} disabled={!canUseFlipbook || !canZoomOut} aria-label="축소">
-                     <Minus className="h-3 w-3 md:h-4 md:w-4" />
-                  </Button>
-                  <div className="min-w-12 text-center text-xs font-semibold tabular-nums md:min-w-20 md:text-base">{zoomLabel}</div>
-                  <Button variant="outline" className="h-8 w-8 p-0 md:h-12 md:w-12" onClick={() => setViewZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 10) / 10))} disabled={!canUseFlipbook || !canZoomIn} aria-label="확대">
-                     <Plus className="h-3 w-3 md:h-4 md:w-4" />
-                  </Button>
-               </div>
-            </div>
+      <section ref={containerRef} className={cn('relative flex h-dvh w-dvw flex-col overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50', className)}>
+         <div data-controls className="relative z-20">
+            <MobileControls
+               currentPageLabel={currentPageLabel}
+               zoomLabel={zoomLabel}
+               canZoomOut={canZoomOut}
+               canZoomIn={canZoomIn}
+               canPrevPage={!!canUseFlipbook && pageIndex > 0}
+               canNextPage={!!canUseFlipbook && pageIndex < numPages - 1}
+               onPrevPage={flipPrev}
+               onNextPage={flipNext}
+               onZoomOut={() => setViewZoom((z) => Math.max(0.7, Math.round((z - 0.1) * 10) / 10))}
+               onZoomIn={() => setViewZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 10) / 10))}
+            />
          </div>
 
-         {status.state === 'error' ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">{status.message}</div> : null}
+         {status.state === 'error' ? (
+            <div className="flex flex-1 items-center justify-center p-4">
+               <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">{status.message}</div>
+            </div>
+         ) : null}
 
          {status.state === 'loading' ? (
             <div className="flex flex-1 items-center justify-center gap-3 text-base text-zinc-700 dark:text-zinc-200">
@@ -446,67 +429,44 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
 
          {canUseFlipbook ? (
             <div
-               ref={scrollRef}
-               className="no-scrollbar relative flex flex-1 items-center justify-center overflow-auto pt-[84px] p-3 md:p-6"
+               ref={scrollContainerRef}
+               className="no-scrollbar relative flex-1 overflow-auto"
                style={{
-                  cursor: viewZoom > 1 ? (isPanning ? 'grabbing' : panBySpace ? 'grab' : 'default') : 'default',
-               }}
-               onPointerDown={(e) => {
-                  if (viewZoom <= 1) return
-                  const el = scrollRef.current
-                  if (!el) return
-                  const targetEl = e.target as HTMLElement | null
-                  const insideFlipbook = !!targetEl?.closest('.flipbook')
-                  // 기본은 페이지 드래그(넘김)를 우선, 스페이스를 누르거나 책 밖에서만 패닝
-                  const shouldPan = panBySpace || !insideFlipbook
-                  if (!shouldPan) return
-                  dragScrollRef.current.active = true
-                  dragScrollRef.current.x = e.clientX
-                  dragScrollRef.current.y = e.clientY
-                  dragScrollRef.current.left = el.scrollLeft
-                  dragScrollRef.current.top = el.scrollTop
-                  setIsPanning(true)
-                  ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
-                  e.preventDefault()
-                  e.stopPropagation()
-               }}
-               onPointerMove={(e) => {
-                  if (!dragScrollRef.current.active) return
-                  const el = scrollRef.current
-                  if (!el) return
-                  const dx = e.clientX - dragScrollRef.current.x
-                  const dy = e.clientY - dragScrollRef.current.y
-                  el.scrollLeft = dragScrollRef.current.left - dx
-                  el.scrollTop = dragScrollRef.current.top - dy
-                  e.preventDefault()
-                  e.stopPropagation()
-               }}
-               onPointerUp={() => {
-                  dragScrollRef.current.active = false
-                  setIsPanning(false)
-               }}
-               onPointerCancel={() => {
-                  dragScrollRef.current.active = false
-                  setIsPanning(false)
+                  touchAction: viewZoom > 1 ? 'pan-x pan-y' : 'manipulation',
                }}
             >
-               <div className="relative flex items-center justify-center">
+               <div className="relative flex min-h-full items-center justify-center p-2">
+                  {/* 모바일 입력 오버레이: CSS(.flipbook-overlay)와 짝이 맞아야 함 */}
+                  <div
+                     className="flipbook-overlay"
+                     aria-hidden="true"
+                     onPointerUp={(e) => {
+                        // 모바일/데스크톱 모두 안정적으로 받기 위해 pointer도 처리
+                        if (e.pointerType === 'touch' || e.pointerType === 'mouse' || e.pointerType === 'pen') {
+                           e.preventDefault()
+                           e.stopPropagation()
+                           handleOverlayClick(e.clientX)
+                        }
+                     }}
+                  />
+
                   <HTMLFlipBook
-                     key={`${sizeKey ?? 'no-size'}-${isNarrow ? 'single' : 'spread'}`}
+                     key={`${sizeKey ?? 'no-size'}-mobile-${viewZoom.toFixed(2)}`}
                      ref={flipbookRef as unknown as React.Ref<unknown>}
                      width={Math.round(pageSize.w)}
                      height={Math.round(pageSize.h)}
                      startPage={pageIndex}
                      showCover={false}
-                     usePortrait={isNarrow}
+                     usePortrait={true}
                      mobileScrollSupport={false}
                      disableFlipByClick={true}
-                     maxShadowOpacity={0.22}
+                     maxShadowOpacity={0.0}
                      className="flipbook"
                      onFlip={(e: { data: number }) => {
                         setPageIndex(e.data)
                         pageIndexRef.current = e.data
                         scheduleRenderRef.current?.()
+                        syncAfterFlip()
                      }}
                   >
                      {Array.from({ length: numPages }).map((_, idx) => (
@@ -523,8 +483,6 @@ export default function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps)
                </div>
             </div>
          ) : null}
-
-         {/* 렌더링 진행은 어르신 UI에서 방해되지 않게 숨김(콘솔로만) */}
       </section>
    )
 }

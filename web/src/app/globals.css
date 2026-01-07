@@ -31,10 +31,31 @@ body {
    overflow: hidden; /* body 스크롤바 난무 방지 */
 }
 
-/* react-pageflip 기본 보정 */
+/* react-pageflip 기본 보정 - PC */
 .flipbook {
    user-select: none;
-   touch-action: manipulation; /* 기본 터치 동작은 허용하되 더블탭 줌 등은 방지 */
+}
+
+/* 모바일 전용: 터치 이벤트 완전 제어 */
+@media (max-width: 767px) {
+   .flipbook {
+      touch-action: none !important;
+      pointer-events: none !important;
+      user-select: none !important;
+   }
+
+   /* 모바일 오버레이로 터치 이벤트 처리 */
+   .flipbook-overlay {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      pointer-events: auto !important;
+      touch-action: manipulation !important; /* 두 손가락 줌 허용 */
+      z-index: 1 !important;
+      background: transparent !important;
+   }
 }
 
 /* 스크롤 컨테이너에서 스크롤바 숨김(드래그로 이동) */
