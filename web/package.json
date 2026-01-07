@@ -8,9 +8,9 @@
       "start": "next start",
      "lint": "eslint",
      "postinstall": "node scripts/copy-pdfjs.mjs",
-     "deploy:pages": "wrangler pages deploy ./out --project-name ebook-main --branch production",
-     "preview:pages": "wrangler pages deploy ./out --project-name ebook-main --branch preview --commit-dirty=true",
-     "pages:dev": "wrangler pages dev ./out --project-name ebook-main"
+    "deploy:pages": "wrangler pages deploy ./out --project-name hanallcompany-ebook --branch production",
+    "preview:pages": "wrangler pages deploy ./out --project-name hanallcompany-ebook --branch preview --commit-dirty=true",
+    "pages:dev": "wrangler pages dev ./out --project-name hanallcompany-ebook"
    },
    "dependencies": {
       "@radix-ui/react-slot": "^1.2.4",

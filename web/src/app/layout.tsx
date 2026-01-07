@@ -15,6 +15,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
    title: '한올평생교육원-ebook',
    description: '한올평생교육원-ebook',
+   viewport: {
+      width: 'device-width',
+      initialScale: 1,
+      maximumScale: 5,
+      userScalable: true,
+   },
 }
 
 export default function RootLayout({

@@ -197,6 +197,99 @@ export function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps) {
       }
    }, [])
 
+   // 모바일 터치 제어: 뷰포트 반절로 페이지 이동 + 두 손가락 줌 허용
+   useEffect(() => {
+      const scrollEl = scrollRef.current
+      if (!scrollEl) return
+
+      let touchStartX = 0
+      let touchStartY = 0
+      let isMultiTouch = false
+
+      const handleTouchStart = (e: TouchEvent) => {
+         const touchCount = e.touches.length
+         isMultiTouch = touchCount >= 2
+
+         // 두 손가락 터치일 때는 브라우저 기본 줌 동작 허용
+         if (isMultiTouch) {
+            return
+         }
+
+         // 한 손가락 터치 시작 위치 기록
+         const touch = e.touches[0]
+         touchStartX = touch.clientX
+         touchStartY = touch.clientY
+
+         // 한 손가락 터치의 모든 기본 동작 방지 (드래그, 스크롤 등)
+         e.preventDefault()
+         e.stopPropagation()
+      }
+
+      const handleTouchMove = (e: TouchEvent) => {
+         // 두 손가락 터치일 때는 브라우저 기본 줌 동작 허용
+         if (e.touches.length >= 2) {
+            return
+         }
+         // 한 손가락 드래그 방지
+         e.preventDefault()
+         e.stopPropagation()
+      }
+
+      const handleTouchEnd = (e: TouchEvent) => {
+         // 두 손가락 터치 후 끝났을 때는 무시
+         if (isMultiTouch) {
+            isMultiTouch = false
+            return
+         }
+
+         const touch = e.changedTouches[0]
+         const endX = touch.clientX
+         const endY = touch.clientY
+
+         // 터치 이동 거리가 너무 작으면 클릭으로 간주하고 무시 (10px 이하)
+         const deltaX = Math.abs(endX - touchStartX)
+         const deltaY = Math.abs(endY - touchStartY)
+         if (deltaX < 10 && deltaY < 10) {
+            return
+         }
+
+         // 뷰포트 너비의 반을 기준으로 왼쪽/오른쪽 판단
+         const viewportWidth = window.innerWidth
+         const isLeftSide = touchStartX < viewportWidth / 2
+
+         if (isLeftSide) {
+            // 왼쪽 반절 터치: 이전 페이지
+            flipbookRef.current?.pageFlip().flipPrev()
+         } else {
+            // 오른쪽 반절 터치: 다음 페이지
+            flipbookRef.current?.pageFlip().flipNext()
+         }
+
+         e.preventDefault()
+         e.stopPropagation()
+      }
+
+      const handleTouchCancel = (e: TouchEvent) => {
+         // 터치 취소 시 플래그 리셋
+         isMultiTouch = false
+         e.preventDefault()
+         e.stopPropagation()
+      }
+
+      // 터치 이벤트 리스너 추가 (passive: false로 preventDefault 허용, capture: true로 먼저 처리)
+      scrollEl.addEventListener('touchstart', handleTouchStart, { passive: false, capture: true })
+      scrollEl.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true })
+      scrollEl.addEventListener('touchend', handleTouchEnd, { passive: false, capture: true })
+      scrollEl.addEventListener('touchcancel', handleTouchCancel, { passive: false, capture: true })
+
+      return () => {
+         scrollEl.removeEventListener('touchstart', handleTouchStart, true)
+         scrollEl.removeEventListener('touchmove', handleTouchMove, true)
+         scrollEl.removeEventListener('touchend', handleTouchEnd, true)
+         scrollEl.removeEventListener('touchcancel', handleTouchCancel, true)
+      }
+   }, [])
+
    const sizeKey = useMemo(() => {
       if (!pageSize) return null
       return `${Math.round(pageSize.w)}x${Math.round(pageSize.h)}`
@@ -388,29 +481,47 @@ export function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps) {
 
    return (
       <section ref={containerRef} className={cn('flex h-dvh w-dvw flex-col bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50', className)}>
-         {/* 컨트롤 바(항상 상단 고정) */}
-         <div className="z-10 flex items-center justify-between gap-3 border-b border-zinc-200 bg-white/95 px-3 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90 md:px-5">
-            <div className="flex items-center gap-2">
-               <Button variant="secondary" className="h-12 px-4 text-base" onClick={() => flipbookRef.current?.pageFlip().flipPrev()} onPointerDown={() => startAutoFlip('prev')} onPointerUp={stopAutoFlip} onPointerCancel={stopAutoFlip} onPointerLeave={stopAutoFlip} disabled={!canUseFlipbook}>
-                  <ChevronLeft />
-                  이전
+         {/* 컨트롤 바(항상 상단 고정 - 줌 영향 받지 않음) */}
+         <div className="fixed top-0 left-0 right-0 z-10 flex items-center justify-between gap-2 border-b border-zinc-200 bg-white/95 px-2 py-2 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90 md:gap-3 md:px-3 md:py-3 md:px-5">
+            <div className="flex items-center gap-1 md:gap-2">
+               <Button
+                  variant="secondary"
+                  className="h-9 px-3 text-sm md:h-12 md:px-4 md:text-base"
+                  onClick={() => flipbookRef.current?.pageFlip().flipPrev()}
+                  onPointerDown={() => startAutoFlip('prev')}
+                  onPointerUp={stopAutoFlip}
+                  onPointerCancel={stopAutoFlip}
+                  onPointerLeave={stopAutoFlip}
+                  disabled={!canUseFlipbook}
+               >
+                  <ChevronLeft className="h-4 w-4 md:h-5 md:w-5" />
+                  <span className="hidden sm:inline">이전</span>
                </Button>
-               <Button variant="secondary" className="h-12 px-4 text-base" onClick={() => flipbookRef.current?.pageFlip().flipNext()} onPointerDown={() => startAutoFlip('next')} onPointerUp={stopAutoFlip} onPointerCancel={stopAutoFlip} onPointerLeave={stopAutoFlip} disabled={!canUseFlipbook}>
-                  다음
-                  <ChevronRight />
+               <Button
+                  variant="secondary"
+                  className="h-9 px-3 text-sm md:h-12 md:px-4 md:text-base"
+                  onClick={() => flipbookRef.current?.pageFlip().flipNext()}
+                  onPointerDown={() => startAutoFlip('next')}
+                  onPointerUp={stopAutoFlip}
+                  onPointerCancel={stopAutoFlip}
+                  onPointerLeave={stopAutoFlip}
+                  disabled={!canUseFlipbook}
+               >
+                  <span className="hidden sm:inline">다음</span>
+                  <ChevronRight className="h-4 w-4 md:h-5 md:w-5" />
                </Button>
             </div>
 
-            <div className="flex items-center gap-3">
-               <div className="text-base font-semibold tabular-nums">{currentPageLabel}</div>
+            <div className="flex items-center gap-1 md:gap-3">
+               <div className="text-sm font-semibold tabular-nums md:text-base">{currentPageLabel}</div>
 
-               <div className="flex items-center gap-2">
-                  <Button variant="outline" className="h-12 w-12 p-0" onClick={() => setViewZoom((z) => Math.max(0.7, Math.round((z - 0.1) * 10) / 10))} disabled={!canUseFlipbook || !canZoomOut} aria-label="축소">
-                     <Minus />
+               <div className="flex items-center gap-1 md:gap-2">
+                  <Button variant="outline" className="h-8 w-8 p-0 md:h-12 md:w-12" onClick={() => setViewZoom((z) => Math.max(0.7, Math.round((z - 0.1) * 10) / 10))} disabled={!canUseFlipbook || !canZoomOut} aria-label="축소">
+                     <Minus className="h-3 w-3 md:h-4 md:w-4" />
                   </Button>
-                  <div className="min-w-20 text-center text-base font-semibold tabular-nums">{zoomLabel}</div>
-                  <Button variant="outline" className="h-12 w-12 p-0" onClick={() => setViewZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 10) / 10))} disabled={!canUseFlipbook || !canZoomIn} aria-label="확대">
-                     <Plus />
+                  <div className="min-w-12 text-center text-xs font-semibold tabular-nums md:min-w-20 md:text-base">{zoomLabel}</div>
+                  <Button variant="outline" className="h-8 w-8 p-0 md:h-12 md:w-12" onClick={() => setViewZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 10) / 10))} disabled={!canUseFlipbook || !canZoomIn} aria-label="확대">
+                     <Plus className="h-3 w-3 md:h-4 md:w-4" />
                   </Button>
                </div>
             </div>
@@ -428,16 +539,9 @@ export function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps) {
          {canUseFlipbook ? (
             <div
                ref={scrollRef}
-               className="no-scrollbar relative flex flex-1 items-center justify-center overflow-auto p-3 md:p-6"
+               className="no-scrollbar relative flex flex-1 items-center justify-center overflow-auto pt-[84px] p-3 md:p-6"
                style={{
-                  cursor:
-                     viewZoom > 1
-                        ? isPanning
-                           ? 'grabbing'
-                           : panBySpace
-                             ? 'grab'
-                             : 'default'
-                        : 'default',
+                  cursor: viewZoom > 1 ? (isPanning ? 'grabbing' : panBySpace ? 'grab' : 'default') : 'default',
                }}
                onPointerDown={(e) => {
                   if (viewZoom <= 1) return
@@ -487,7 +591,8 @@ export function EbookFlipbook({ pdfUrl, className }: EbookFlipbookProps) {
                      startPage={pageIndex}
                      showCover={false}
                      usePortrait={isNarrow}
-                     mobileScrollSupport
+                     mobileScrollSupport={false}
+                     disableFlipByClick={true}
                      maxShadowOpacity={0.22}
                      className="flipbook"
                      onFlip={(e: { data: number }) => {
